@@ -27,22 +27,33 @@ class QDeeplandiaPlugin:
 
     def initGui(self):
         # Select a trained model on the file system
-        self.load_model_action = QAction(
-            "Select a trained model", self.iface.mainWindow()
-        )
+        load_model_msg = "Load a trained model"
+        self.load_model_action = QAction(load_model_msg, self.iface.mainWindow())
         self.load_model_action.triggered.connect(self.load_trained_model)
         self.iface.addPluginToMenu("QDeeplandia", self.load_model_action)
-        # Run icon
-        icon = QIcon(os.path.join(os.path.dirname(__file__), "img/run.svg"))
-        self.inference = QAction(icon, u'Run inference', self.iface.mainWindow())
+        load_icon = QIcon(os.path.join(os.path.dirname(__file__), "img/load.svg"))
+        self.model_loading = QAction(load_icon, load_model_msg, self.iface.mainWindow())
+        self.model_loading.triggered.connect(lambda: self.load_trained_model())
+        self.iface.addToolBarIcon(self.model_loading)
+        # Run-an-inference process
+        run_inference_msg = "Run an inference"
+        self.load_model_action = QAction(run_inference_msg, self.iface.mainWindow())
+        self.run_inference_action.triggered.connect(self.infer)
+        self.iface.addPluginToMenu("QDeeplandia", self.run_inference_action)
+        run_icon = QIcon(os.path.join(os.path.dirname(__file__), "img/run.svg"))
+        self.inference = QAction(run_icon, run_inference_msg, self.iface.mainWindow())
         self.inference.triggered.connect(lambda: self.infer())
         self.iface.addToolBarIcon(self.inference)
 
     def unload(self):
-        # Remove the plugin menu
+        # Select a trained model on the file system
         self.iface.removePluginMenu("QDeeplandia", self.load_model_action)
         self.load_model_action.setParent(None)
-        # Remove the icon from the tool bar
+        self.iface.removeToolBarIcon(self.model_loading)
+        self.model_loading.setParent(None)
+        # Run-an-inference process
+        self.iface.removePluginMenu("QDeeplandia", self.run_inference_action)
+        self.run_inference_action.setParent(None)
         self.iface.removeToolBarIcon(self.inference)
         self.inference.setParent(None)
 

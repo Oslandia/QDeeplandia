@@ -17,14 +17,15 @@
 
 import os
 
-from qgis.core import Qgis
+from qgis.core import Qgis, QgsRasterDataProvider, QgsApplication
 
-from qgis.PyQt.QtCore import QSettings, QCoreApplication
+from qgis.PyQt.QtCore import QSettings, QCoreApplication, pyqtSignal
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QWidget, QHBoxLayout, QVBoxLayout, QMessageBox
 
 os.environ['DEEPOSL_CONFIG']=os.path.join(os.path.dirname(__file__),'config.ini')
 from .deeposlandia import postprocess
+from .processing_provider.provider import QDeepLandiaProvider
 
 from .gui.NbLabelDialog import NbLabelDialog
 
@@ -36,6 +37,9 @@ def tr(message):
 
 class QDeeplandiaPlugin(QWidget):
     """ Major class of QDeeplandia plugin """
+
+    isready = pyqtSignal()
+
     def __init__(self, iface):
         """Constructor
 
@@ -44,7 +48,10 @@ class QDeeplandiaPlugin(QWidget):
         """
         super(QDeeplandiaPlugin, self).__init__()
         self.iface = iface
+        self.mapCanvas = self.iface.mapCanvas()
         self.model = None
+        self.deepOprovider = None
+        self.layer = self.updateLayer()
 
         locale = QSettings().value('locale/userLocale') or 'en_USA'
         locale= locale[0:2]
@@ -59,8 +66,12 @@ class QDeeplandiaPlugin(QWidget):
             QCoreApplication.installTranslator(self.translator)
             print("TRANSLATION LOADED", locale_path)
 
+        self.mapCanvas.currentLayerChanged.connect(self.updateLayer)
+        self.isready.connect(self.ready)
+
     def initGui(self):
         # Select a trained model on the file system
+        self.initProcessing()
         load_model_msg = tr("Load a trained model")
         load_icon = QIcon(os.path.join(os.path.dirname(__file__), "img/load.svg"))
         self.model_loading = QAction(load_icon, load_model_msg, self.iface.mainWindow())
@@ -76,6 +87,10 @@ class QDeeplandiaPlugin(QWidget):
         self.iface.addToolBarIcon(self.inference)
         self.inference.setEnabled(False)
 
+    def initProcessing(self):
+        self.deepOprovider = QDeepLandiaProvider()
+        QgsApplication.processingRegistry().addProvider(self.deepOprovider)
+
     def unload(self):
         # Select a trained model on the file system
         self.iface.removePluginMenu("QDeeplandia", self.model_loading)
@@ -85,6 +100,7 @@ class QDeeplandiaPlugin(QWidget):
         self.iface.removePluginMenu("QDeeplandia", self.inference)
         self.iface.removeToolBarIcon(self.inference)
         self.inference.setParent(None)
+        QgsApplication.processingRegistry().removeProvider(self.deepOprovider)
 
     def tr(message):
         """Get the translation for a string using Qt translation API.
@@ -116,7 +132,21 @@ class QDeeplandiaPlugin(QWidget):
                     str(e), level=Qgis.Critical)
 
         if self.model :
-            self.inference.setEnabled(True)
+            self.isready.emit()
 
     def infer(self):
         pass
+
+    def updateLayer(self):
+        layer = self.mapCanvas.currentLayer()
+        if layer :
+            if isinstance(layer.dataProvider(), QgsRasterDataProvider):
+                self.layer = layer
+            else :
+                self.layer = None
+        self.isready.emit()
+
+    def ready(self) :
+        print (self.layer, self.model)
+        if self.layer and self.model :
+            self.inference.setEnabled(True)

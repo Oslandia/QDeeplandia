@@ -11,6 +11,13 @@
 ***************************************************************************
 """
 
+import os
+import sys
+import glob
+import gdal
+import shutil
+import numpy as np
+
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (QgsProcessing,
                        QgsFeatureSink,
@@ -19,22 +26,19 @@ from qgis.core import (QgsProcessing,
                        QgsProcessingParameterFeatureSource,
                        QgsProcessingParameterFeatureSink,
                        QgsProcessingParameterRasterLayer,
-                       QgsProcessingParameterFile)
+                       QgsProcessingParameterFile,
+                       QgsProcessingParameterNumber,
+                       QgsProcessingParameterFileDestination)
 from qgis import processing
 
+from deeposlandia.inference import predict
+from deeposlandia.postprocess import get_trained_model, extract_images, \
+                                     extract_coordinates_from_filenames, \
+                                     build_full_labelled_image, get_labels, \
+                                     assign_label_colors, draw_grid
 
 class InferenceQDeepLandiaProcessingAlgorithm(QgsProcessingAlgorithm):
     """
-    This is an example algorithm that takes a vector layer and
-    creates a new identical one.
-
-    It is meant to be used as an example of how to create your own
-    algorithms and explain methods and variables used to do it. An
-    algorithm like this will be available in all elements, and there
-    is not need for additional work.
-
-    All Processing algorithms should extend the QgsProcessingAlgorithm
-    class.
     """
 
     # Constants used to refer to parameters and outputs. They will be
@@ -43,7 +47,12 @@ class InferenceQDeepLandiaProcessingAlgorithm(QgsProcessingAlgorithm):
 
     INPUT = 'INPUT'
     MODEL = 'MODEL'
+    LABELS = 'LABELS'
     OUTPUT = 'OUTPUT'
+
+    def __init__(self, model=None):
+        super().__init__()
+        self.model=model
 
     def tr(self, string):
         """
@@ -52,7 +61,7 @@ class InferenceQDeepLandiaProcessingAlgorithm(QgsProcessingAlgorithm):
         return QCoreApplication.translate('Processing', string)
 
     def createInstance(self):
-        return InferenceQDeepLandiaProcessingAlgorithm()
+        return InferenceQDeepLandiaProcessingAlgorithm(self.model)
 
     def name(self):
         """
@@ -119,13 +128,24 @@ class InferenceQDeepLandiaProcessingAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                self.LABELS,
+                self.tr('Number of labels used for the inference'),
+                type = QgsProcessingParameterNumber.Integer,
+                defaultValue = 4,
+                minValue = 2,
+                optional = True
+            )
+        )
+
         # We add a feature sink in which to store our processed features (this
         # usually takes the form of a newly created vector layer when the
         # algorithm is run in QGIS).
         self.addParameter(
-            QgsProcessingParameterFeatureSink(
+            QgsProcessingParameterFileDestination(
                 self.OUTPUT,
-                self.tr('Output layer')
+                self.tr('Output file')
             )
         )
 
@@ -134,78 +154,88 @@ class InferenceQDeepLandiaProcessingAlgorithm(QgsProcessingAlgorithm):
         Here is where the processing itself takes place.
         """
 
-        # Retrieve the feature source and sink. The 'dest_id' variable is used
-        # to uniquely identify the feature sink, and must be included in the
-        # dictionary returned by the processAlgorithm function.
-        # source = self.parameterAsSource(
-        #     parameters,
-        #     self.INPUT,
-        #     context
-        # )
+        raster_in = self.parameterAsRasterLayer(
+            parameters,
+            self.INPUT,
+            context
+        )
 
-        # # If source was not found, throw an exception to indicate that the algorithm
-        # # encountered a fatal error. The exception text can be any string, but in this
-        # # case we use the pre-built invalidSourceError method to return a standard
-        # # helper text for when a source cannot be evaluated
-        # if source is None:
-        #     raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT))
+        if not self.model:
+            model_path = self.parameterAsString(
+                parameters,
+                self.MODEL,
+                context
+            )
+            nb_labels = self.parameterAsInt(
+                parameters,
+                self.LABELS,
+                context
+            )
+            datapath = os.path.abspath(os.path.join(os.path.dirname(model_path), '..', '..', '..', '..'))
+            dataset = os.path.basename(os.path.abspath(os.path.join(os.path.dirname(model_path), '..', '..', '..')))
+            image_size = os.path.splitext(os.path.basename(model_path))[0].split('-')[-1]
+            try :
+                model = get_trained_model(datapath, dataset, int(image_size), int(nb_labels))
+            except:
+                sys.exit()
+        
+        else :
+            model = self.model['model']
+            model_path = self.model['path']
+            datapath = os.path.abspath(os.path.join(os.path.dirname(model_path), '..', '..', '..', '..'))
+            dataset = os.path.basename(os.path.abspath(os.path.join(os.path.dirname(model_path), '..', '..', '..')))
+            image_size = os.path.splitext(os.path.basename(model_path))[0].split('-')[-1]
 
-        # (sink, dest_id) = self.parameterAsSink(
-        #     parameters,
-        #     self.OUTPUT,
-        #     context,
-        #     source.fields(),
-        #     source.wkbType(),
-        #     source.sourceCrs()
-        # )
+        param = { 'INPUT': raster_in.id(), 'OUTPUT': datapath, 'DATASET': dataset, 'SHAPE': image_size}
 
-        # # Send some information to the user
-        # feedback.pushInfo('CRS is {}'.format(source.sourceCrs().authid()))
+        out = processing.run('QDeepLandia:DatagenQDeepLandia', param, feedback=feedback)
 
-        # # If sink was not created, throw an exception to indicate that the algorithm
-        # # encountered a fatal error. The exception text can be any string, but in this
-        # # case we use the pre-built invalidSinkError method to return a standard
-        # # helper text for when a sink cannot be evaluated
-        # if sink is None:
-        #     raise QgsProcessingException(self.invalidSinkError(parameters, self.OUTPUT))
+        raster_list = glob.glob(os.path.join(out['OUTPUT'],'*.png'))
 
-        # # Compute the number of steps to display within the progress bar and
-        # # get features from source
-        # total = 100.0 / source.featureCount() if source.featureCount() else 0
-        # features = source.getFeatures()
+        images = extract_images(raster_list)
+        coordinates = extract_coordinates_from_filenames(raster_list)
+        labels = get_labels(datapath, dataset, image_size)
 
-        # for current, feature in enumerate(features):
-        #     # Stop the algorithm if cancel button has been clicked
-        #     if feedback.isCanceled():
-        #         break
+        data = build_full_labelled_image(
+            images,
+            coordinates,
+            model,
+            int(image_size),
+            int(raster_in.width()),
+            int(raster_in.height()),
+            128
+        )
 
-        #     # Add a feature in the sink
-        #     sink.addFeature(feature, QgsFeatureSink.FastInsert)
+        colored_data = assign_label_colors(data, labels)
+        colored_data = draw_grid(
+            colored_data, int(raster_in.width()), int(raster_in.height()), int(image_size)
+        )
+        predicted_label_folder = os.path.join(
+            datapath,
+            dataset,
+            "output",
+            "semseg",
+            "predicted_labels"
+        )
+        os.makedirs(predicted_label_folder, exist_ok=True)
+        predicted_label_file = os.path.join(
+            predicted_label_folder,
+            os.path.basename(os.path.splitext(raster_in.source())[0]) + "_" + str(image_size) + ".tif",
+        )
+        ds = gdal.Open(raster_in.source())
+        CreateGeoTiff(predicted_label_file, colored_data, ds.GetGeoTransform(), ds.GetProjection())
+        shutil.copy(predicted_label_file, self.OUTPUT)
+        return {self.OUTPUT: predicted_label_file}
 
-        #     # Update the progress bar
-        #     feedback.setProgress(int(current * total))
+def CreateGeoTiff(outRaster, data, geo_transform, projection):
+    driver = gdal.GetDriverByName('GTiff')
+    rows, cols, no_bands = data.shape
+    DataSet = driver.Create(outRaster, cols, rows, no_bands, gdal.GDT_Byte)
+    DataSet.SetGeoTransform(geo_transform)
+    DataSet.SetProjection(projection)
 
-        # # To run another Processing algorithm as part of this algorithm, you can use
-        # # processing.run(...). Make sure you pass the current context and feedback
-        # # to processing.run to ensure that all temporary layer outputs are available
-        # # to the executed algorithm, and that the executed algorithm can send feedback
-        # # reports to the user (and correctly handle cancellation and progress reports!)
-        # if False:
-        #     buffered_layer = processing.run("native:buffer", {
-        #         'INPUT': dest_id,
-        #         'DISTANCE': 1.5,
-        #         'SEGMENTS': 5,
-        #         'END_CAP_STYLE': 0,
-        #         'JOIN_STYLE': 0,
-        #         'MITER_LIMIT': 2,
-        #         'DISSOLVE': False,
-        #         'OUTPUT': 'memory:'
-        #     }, context=context, feedback=feedback)['OUTPUT']
+    data = np.moveaxis(data, -1, 0)
 
-        # Return the results of the algorithm. In this case our only result is
-        # the feature sink which contains the processed features, but some
-        # algorithms may return multiple feature sinks, calculated numeric
-        # statistics, etc. These should all be included in the returned
-        # dictionary, with keys matching the feature corresponding parameter
-        # or output names.
-        return #{self.OUTPUT: dest_id}
+    for i, image in enumerate(data, 1):
+        DataSet.GetRasterBand(i).WriteArray(image)
+    DataSet = None

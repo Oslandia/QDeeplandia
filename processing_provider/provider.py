@@ -1,12 +1,14 @@
 from qgis.core import QgsProcessingProvider
 
 from .inference import InferenceQDeepLandiaProcessingAlgorithm
+from .datagen import DatagenQDeepLandiaProcessingAlgorithm
 
 
 class QDeepLandiaProvider(QgsProcessingProvider):
 
     def loadAlgorithms(self, *args, **kwargs):
         self.addAlgorithm(InferenceQDeepLandiaProcessingAlgorithm())
+        self.addAlgorithm(DatagenQDeepLandiaProcessingAlgorithm())
         # add additional algorithms here
         # self.addAlgorithm(MyOtherAlgorithm())
 

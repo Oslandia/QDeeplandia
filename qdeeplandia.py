@@ -24,14 +24,17 @@ import processing
 
 from qgis.PyQt.QtCore import QSettings, QCoreApplication, pyqtSignal
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QFileDialog, QWidget, QHBoxLayout, QVBoxLayout, QMessageBox
+from qgis.PyQt.QtWidgets import QAction, QFileDialog, QWidget, \
+                                QHBoxLayout, QVBoxLayout, QMessageBox, \
+                                QToolBar, QLabel, QCheckBox
 
 os.environ['DEEPOSL_CONFIG']=os.path.join(os.path.dirname(__file__),'config.ini')
 from .deeposlandia import postprocess
 from .processing_provider.provider import QDeepLandiaProvider
-from .processing_provider.inference import InferenceQDeepLandiaProcessingAlgorithm
 
 from .gui.NbLabelDialog import NbLabelDialog
+
+from .inferenceTask import InferenceTask
 
 def tr(message):
     """Get the translation for a string using Qt translation API.
@@ -56,6 +59,7 @@ class QDeeplandiaPlugin(QWidget):
         self.model = None
         self.deepOprovider = None
         self.layer = self.updateLayer()
+        self.nb_labels = None
         self.model_path = None
         self.datapath = None
         self.dataset = None
@@ -79,20 +83,33 @@ class QDeeplandiaPlugin(QWidget):
     def initGui(self):
         # Select a trained model on the file system
         self.initProcessing()
+
+        self.toolbar = QToolBar("QDeepLandia_toolbar")
+        self.toolbar.setObjectName("QDeepLandia_toolbar")
+        # self.toolbar.setMaximumWidth(180)
+        self.toolbar.addWidget(QLabel("QDeeplandia"))
+        self.iface.addToolBar(self.toolbar)
+
+        # Load model process
         load_model_msg = tr("Load a trained model")
         load_icon = QIcon(os.path.join(os.path.dirname(__file__), "img/load.svg"))
         self.model_loading = QAction(load_icon, load_model_msg, self.iface.mainWindow())
         self.model_loading.triggered.connect(lambda: self.load_trained_model())
         self.iface.addPluginToMenu("QDeeplandia", self.model_loading)
-        self.iface.addToolBarIcon(self.model_loading)
+        self.toolbar.addAction(self.model_loading)
+
         # Run-an-inference process
         run_inference_msg = tr("Run an inference")
         run_icon = QIcon(os.path.join(os.path.dirname(__file__), "img/run.svg"))
         self.inference = QAction(run_icon, run_inference_msg, self.iface.mainWindow())
         self.inference.triggered.connect(lambda: self.infer())
         self.iface.addPluginToMenu("QDeeplandia", self.inference)
-        self.iface.addToolBarIcon(self.inference)
+        self.toolbar.addAction(self.inference)
         self.inference.setEnabled(False)
+
+        # Use canvas parameters
+        self.canvasCheckbox = QCheckBox('Use canvas extent')
+        self.toolbar.addWidget(self.canvasCheckbox)
 
     def initProcessing(self):
         self.deepOprovider = QDeepLandiaProvider()
@@ -101,11 +118,10 @@ class QDeeplandiaPlugin(QWidget):
     def unload(self):
         # Select a trained model on the file system
         self.iface.removePluginMenu("QDeeplandia", self.model_loading)
-        self.iface.removeToolBarIcon(self.model_loading)
+        self.toolbar.setParent(None)
         self.model_loading.setParent(None)
         # Run-an-inference process
         self.iface.removePluginMenu("QDeeplandia", self.inference)
-        self.iface.removeToolBarIcon(self.inference)
         self.inference.setParent(None)
         QgsApplication.processingRegistry().removeProvider(self.deepOprovider)
 
@@ -127,7 +143,7 @@ class QDeeplandiaPlugin(QWidget):
         nbLabelDlg = NbLabelDialog(self)
 
         if nbLabelDlg.exec():
-            nb_labels = nbLabelDlg.param()
+            self.nb_labels = nbLabelDlg.param()
         else :
             return
         
@@ -135,7 +151,7 @@ class QDeeplandiaPlugin(QWidget):
         self.dataset = os.path.basename(os.path.abspath(os.path.join(os.path.dirname(self.model_path), '..', '..', '..')))
         self.image_size = os.path.splitext(os.path.basename(self.model_path))[0].split('-')[-1]
         try :
-            self.model = postprocess.get_trained_model(self.datapath, self.dataset, int(self.image_size), int(nb_labels))
+            self.model = postprocess.get_trained_model(self.datapath, self.dataset, int(self.image_size), int(self.nb_labels))
         except ValueError as e:
             self.iface.messageBar().pushMessage(tr("Critical"),
                     str(e), level=Qgis.Critical)
@@ -144,15 +160,16 @@ class QDeeplandiaPlugin(QWidget):
             self.updateLayer()
 
     def infer(self):
-        feedback = Feedback(self.iface)
-        infer_algorithm = 'QDeepLandia:InferenceQDeepLandia'
-        param = { 'INPUT' : self.layer, 'OUTPUT' : '/home/speillet/tmp/tmp.tif', 'MODEL' : self.model_path }
-        inference_alg = InferenceQDeepLandiaProcessingAlgorithm(model={'path' : self.model_path ,'model' : self.model})
-        out = inference_alg.run(param, context=QgsProcessingContext(), feedback=feedback)
+        extent = None
+        if self.canvasCheckbox.checkState() :
+            extent = self.mapCanvas.extent()
 
-        if os.path.exists(out[0]['OUTPUT']):
-            self.iface.addRasterLayer(out[0]['OUTPUT'], "labelled_output")
-        return
+        def addOutput(layer):
+            self.iface.addRasterLayer(layer)
+
+        task = InferenceTask('Inference', self.iface, self.layer, self.nb_labels, self.model_path, extent)
+        task.terminated.connect(addOutput)
+        QgsApplication.taskManager().addTask(task)
 
     def updateLayer(self):
         layer = self.mapCanvas.currentLayer()
@@ -168,22 +185,3 @@ class QDeeplandiaPlugin(QWidget):
     def ready(self) :
         if self.layer and self.model :
             self.inference.setEnabled(True)
-
-class Feedback(QgsProcessingFeedback):
-    """To provide feedback to the message bar from the express tools"""
-
-    def __init__(self, iface):
-        super().__init__()
-        self.iface = iface
-        self.fatal_errors = []
-
-    def reportError(self, error, fatalError=False):
-        QgsMessageLog.logMessage(str(error), "QDeeplandia")
-        if fatalError:
-            self.fatal_errors.append(error)
-
-    def pushToUser(self, exception):
-        QgsMessageLog.logMessage(str(exception), "QDeeplandia")
-        self.iface.messageBar().pushMessage(
-            "Error", ", ".join(self.fatal_errors), level=Qgis.Critical, duration=0
-        )

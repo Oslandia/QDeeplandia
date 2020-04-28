@@ -20,6 +20,7 @@ import numpy as np
 
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (QgsProcessing,
+                       QgsRasterLayer,
                        QgsFeatureSink,
                        QgsProcessingException,
                        QgsProcessingAlgorithm,
@@ -28,7 +29,8 @@ from qgis.core import (QgsProcessing,
                        QgsProcessingParameterRasterLayer,
                        QgsProcessingParameterFile,
                        QgsProcessingParameterNumber,
-                       QgsProcessingParameterFileDestination)
+                       QgsProcessingParameterFileDestination,
+                       QgsProcessingParameterExtent)
 from qgis import processing
 
 from deeposlandia.inference import predict
@@ -46,13 +48,13 @@ class InferenceQDeepLandiaProcessingAlgorithm(QgsProcessingAlgorithm):
     # calling from the QGIS console.
 
     INPUT = 'INPUT'
+    EXTENT = 'EXTENT'
     MODEL = 'MODEL'
     LABELS = 'LABELS'
     OUTPUT = 'OUTPUT'
 
     def __init__(self, model=None):
         super().__init__()
-        self.model=model
 
     def tr(self, string):
         """
@@ -61,7 +63,7 @@ class InferenceQDeepLandiaProcessingAlgorithm(QgsProcessingAlgorithm):
         return QCoreApplication.translate('Processing', string)
 
     def createInstance(self):
-        return InferenceQDeepLandiaProcessingAlgorithm(self.model)
+        return InferenceQDeepLandiaProcessingAlgorithm()
 
     def name(self):
         """
@@ -121,6 +123,15 @@ class InferenceQDeepLandiaProcessingAlgorithm(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
+            QgsProcessingParameterExtent(
+                self.EXTENT,
+                self.tr('Input extent'),
+                defaultValue= None,
+                optional=True
+            )
+        )
+
+        self.addParameter(
             QgsProcessingParameterFile(
                 self.MODEL,
                 self.tr('Input model'),
@@ -160,38 +171,50 @@ class InferenceQDeepLandiaProcessingAlgorithm(QgsProcessingAlgorithm):
             context
         )
 
-        if not self.model:
-            model_path = self.parameterAsString(
-                parameters,
-                self.MODEL,
-                context
-            )
-            nb_labels = self.parameterAsInt(
-                parameters,
-                self.LABELS,
-                context
-            )
-            datapath = os.path.abspath(os.path.join(os.path.dirname(model_path), '..', '..', '..', '..'))
-            dataset = os.path.basename(os.path.abspath(os.path.join(os.path.dirname(model_path), '..', '..', '..')))
-            image_size = os.path.splitext(os.path.basename(model_path))[0].split('-')[-1]
-            try :
-                model = get_trained_model(datapath, dataset, int(image_size), int(nb_labels))
-            except:
-                sys.exit()
-        
-        else :
-            model = self.model['model']
-            model_path = self.model['path']
-            datapath = os.path.abspath(os.path.join(os.path.dirname(model_path), '..', '..', '..', '..'))
-            dataset = os.path.basename(os.path.abspath(os.path.join(os.path.dirname(model_path), '..', '..', '..')))
-            image_size = os.path.splitext(os.path.basename(model_path))[0].split('-')[-1]
+        output_path = self.parameterAsString(
+            parameters,
+            self.OUTPUT,
+            context
+        )
+
+        model_path = self.parameterAsString(
+            parameters,
+            self.MODEL,
+            context
+        )
+        nb_labels = self.parameterAsInt(
+            parameters,
+            self.LABELS,
+            context
+        )
+
+        datapath = os.path.abspath(os.path.join(os.path.dirname(model_path), '..', '..', '..', '..'))
+        dataset = os.path.basename(os.path.abspath(os.path.join(os.path.dirname(model_path), '..', '..', '..')))
+        image_size = os.path.splitext(os.path.basename(model_path))[0].split('-')[-1]
+        try :
+            model = get_trained_model(datapath, dataset, int(image_size), int(nb_labels))
+        except:
+            sys.exit()
+
+        extent = self.parameterAsExtent(
+            parameters,
+            self.EXTENT,
+            context
+        )
 
         param = { 'INPUT': raster_in.id(), 'OUTPUT': datapath, 'DATASET': dataset, 'SHAPE': image_size}
-
+        if extent.xMinimum() != 0 and extent.xMaximum() != 0:
+            if ((extent.xMaximum() - extent.xMinimum())/raster_in.rasterUnitsPerPixelX() >= int(image_size) and \
+               (extent.yMaximum() - extent.yMinimum())/raster_in.rasterUnitsPerPixelY() >= int(image_size)):
+                clipped = os.path.join(os.path.dirname(output_path), 'clipped.tif')
+                param = { 'INPUT': raster_in.id(), 'PROJWIN': extent, 'OUTPUT': clipped}
+                out = processing.run('gdal:cliprasterbyextent', param, feedback=feedback)
+                param = { 'INPUT': out['OUTPUT'], 'OUTPUT': datapath, 'DATASET': dataset, 'SHAPE': image_size}
+                raster_in = QgsRasterLayer(out['OUTPUT'],'clipped', 'gdal')
+        
         out = processing.run('QDeepLandia:DatagenQDeepLandia', param, feedback=feedback)
 
         raster_list = glob.glob(os.path.join(out['OUTPUT'],'*.png'))
-
         images = extract_images(raster_list)
         coordinates = extract_coordinates_from_filenames(raster_list)
         labels = get_labels(datapath, dataset, image_size)
@@ -224,8 +247,8 @@ class InferenceQDeepLandiaProcessingAlgorithm(QgsProcessingAlgorithm):
         )
         ds = gdal.Open(raster_in.source())
         CreateGeoTiff(predicted_label_file, colored_data, ds.GetGeoTransform(), ds.GetProjection())
-        shutil.copy(predicted_label_file, self.OUTPUT)
-        return {self.OUTPUT: predicted_label_file}
+        shutil.copy(predicted_label_file, output_path)
+        return {self.OUTPUT: output_path}
 
 def CreateGeoTiff(outRaster, data, geo_transform, projection):
     driver = gdal.GetDriverByName('GTiff')

@@ -164,20 +164,21 @@ class DatagenQDeepLandiaProcessingAlgorithm(QgsProcessingAlgorithm):
             context
         )
 
-        # To do clip on canvas
         path=''
-        for i in [dest_path, dataset, 'input','images']:
+        for i in [dest_path, dataset, 'input','testing','images']:
             path = os.path.join(path, i)
             if not os.path.exists(path):
                 os.mkdir(path)
 
-        if os.path.exists(os.path.join( path, os.path.basename( raster_in.source()))):
-            os.remove(os.path.join( path, os.path.basename( raster_in.source())))
+        for file in os.listdir(path):
+            os.remove(os.path.join(path,file))
+
         shutil.copy( raster_in.source(), os.path.join( path, os.path.basename( raster_in.source())))
 
+        output_folder = os.path.join(dest_path, dataset, 'preprocessed', str(shape), 'testing', 'images')
+        shutil.rmtree(os.path.join(dest_path, dataset, 'preprocessed', str(shape)))
+        
         cmd = ['deepo', 'datagen', '-D', dataset, '-s', str(shape), '-P', dest_path, '-T', '1']
         subprocess.run(cmd)
-
-        output_folder = os.path.join(dest_path, dataset, 'preprocessed', str(shape), 'testing', 'images')
 
         return {self.OUTPUT: output_folder}

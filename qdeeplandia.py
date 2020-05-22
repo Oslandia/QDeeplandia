@@ -84,10 +84,10 @@ class QDeeplandiaPlugin(QWidget):
         # Select a trained model on the file system
         self.initProcessing()
 
-        self.toolbar = QToolBar("QDeepLandia_toolbar")
+        self.toolbar = QToolBar(tr("QDeepLandia_toolbar"))
         self.toolbar.setObjectName("QDeepLandia_toolbar")
         # self.toolbar.setMaximumWidth(180)
-        self.toolbar.addWidget(QLabel("QDeeplandia"))
+        self.toolbar.addWidget(QLabel(tr("QDeeplandia")))
         self.iface.addToolBar(self.toolbar)
 
         # Load model process
@@ -108,7 +108,7 @@ class QDeeplandiaPlugin(QWidget):
         self.inference.setEnabled(False)
 
         # Use canvas parameters
-        self.canvasCheckbox = QCheckBox('Use canvas extent')
+        self.canvasCheckbox = QCheckBox(tr('Use canvas extent'))
         self.toolbar.addWidget(self.canvasCheckbox)
 
     def initProcessing(self):
@@ -132,6 +132,7 @@ class QDeeplandiaPlugin(QWidget):
         return QCoreApplication.translate('@default', message)
 
     def load_trained_model(self):
+        """Load a h5 model"""
         self.model_path, __ = QFileDialog.getOpenFileName(None,
                 tr("Load best-model-*.h5 file"),
                 os.path.abspath("."),
@@ -160,18 +161,23 @@ class QDeeplandiaPlugin(QWidget):
             self.updateLayer()
 
     def infer(self):
+        """Launch inference on the current layer"""
         extent = None
         if self.canvasCheckbox.checkState() :
             extent = self.mapCanvas.extent()
 
         def addOutput(layer):
-            self.iface.addRasterLayer(layer)
+            self.inference.setEnabled(True)
+            if layer :
+                self.iface.addRasterLayer(layer)
 
         task = InferenceTask('Inference', self.iface, self.layer, self.nb_labels, self.model_path, extent)
         task.terminated.connect(addOutput)
+        self.inference.setEnabled(False)
         QgsApplication.taskManager().addTask(task)
 
     def updateLayer(self):
+        """Update the current layer"""
         layer = self.mapCanvas.currentLayer()
         if layer :
             if isinstance(layer.dataProvider(), QgsRasterDataProvider):

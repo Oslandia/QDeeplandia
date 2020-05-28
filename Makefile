@@ -8,7 +8,13 @@ endif
 
 SOURCES=__init__.py \
 	metadata.txt \
-	qdeeplandia.py
+	qdeeplandia.py \
+	config.ini \
+	inferenceTask.py \
+	feedback.py \
+	gui \
+	img \
+	processing_provider
 
 ZIP_FILE=$(PLUGIN_NAME)-$(VERSION).zip
 

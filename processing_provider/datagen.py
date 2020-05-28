@@ -164,8 +164,8 @@ class DatagenQDeepLandiaProcessingAlgorithm(QgsProcessingAlgorithm):
             context
         )
 
-        path=''
-        for i in [dest_path, dataset, 'input','testing','images']:
+        path = ''
+        for i in [dest_path, dataset, 'input', 'testing', 'images']:
             path = os.path.join(path, i)
             if not os.path.exists(path):
                 os.mkdir(path)
@@ -177,7 +177,7 @@ class DatagenQDeepLandiaProcessingAlgorithm(QgsProcessingAlgorithm):
 
         output_folder = os.path.join(dest_path, dataset, 'preprocessed', str(shape), 'testing', 'images')
         shutil.rmtree(os.path.join(dest_path, dataset, 'preprocessed', str(shape)))
-        
+
         cmd = ['deepo', 'datagen', '-D', dataset, '-s', str(shape), '-P', dest_path, '-T', '1']
         subprocess.run(cmd)
 

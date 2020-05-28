@@ -33,8 +33,8 @@ from .deeposlandia import postprocess
 from .processing_provider.provider import QDeepLandiaProvider
 
 from .gui.NbLabelDialog import NbLabelDialog
-
 from .inferenceTask import InferenceTask
+
 
 def tr(message):
     """Get the translation for a string using Qt translation API.
@@ -65,7 +65,7 @@ class QDeeplandiaPlugin(QWidget):
         self.dataset = None
 
         locale = QSettings().value('locale/userLocale') or 'en_USA'
-        locale= locale[0:2]
+        locale = locale[0:2]
         locale_path = os.path.join(
             os.path.dirname(__file__),
             'i18n',
@@ -184,7 +184,7 @@ class QDeeplandiaPlugin(QWidget):
                 self.layer = layer
             else :
                 self.layer = None
-        else : 
+        else :
             self.layer = None
         self.isready.emit()
 

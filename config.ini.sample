@@ -1,0 +1,12 @@
+[status]
+status = dev
+
+[running]
+processes = 1
+
+[symlink]
+aerial = /path/to/aerial/dataset/
+tanzania = /path/to/tanzania/dataset/
+
+[folder]
+project_folder = /path/to/static/files/
